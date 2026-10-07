@@ -1,0 +1,18 @@
+# Virtual environment
+.venv/
+
+# Python
+__pycache__/
+*.py[cod]
+
+# Local database
+metacritic.db
+
+# VS Code
+.vscode/
+
+# macOS
+.DS_Store
+
+# Streamlit secrets, if we ever use them
+.streamlit/secrets.toml
