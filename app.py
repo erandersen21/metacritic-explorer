@@ -18,6 +18,7 @@ st.set_page_config(
 init_db()
 
 
+@st.cache_data
 def load_seasons() -> pd.DataFrame:
     with SessionLocal() as session:
         rows = session.execute(
@@ -82,6 +83,10 @@ df = load_seasons()
 
 st.title("Metacritic Explorer")
 
+# -------------------------
+# Year
+# -------------------------
+
 years = sorted(
     df["Year"].dropna().astype(int).unique(),
     reverse=True,
@@ -95,15 +100,48 @@ year = st.selectbox(
 
 year_df = df[df["Year"] == year].copy()
 
-col1, col2, col3 = st.columns(3)
+total_for_year = len(year_df)
+scored_for_year = year_df["Metascore"].notna().sum()
+
+
+# -------------------------
+# Filters
+# -------------------------
+
+search = st.text_input(
+    "Search titles",
+    placeholder="Search for a show...",
+)
+
+if search:
+    year_df = year_df[
+        year_df["Title"].str.contains(
+            search,
+            case=False,
+            na=False,
+        )
+    ]
+
+
+col1, col2, col3, col4 = st.columns(4)
 
 with col1:
+    season_type = st.selectbox(
+        "Season type",
+        [
+            "All",
+            "New shows",
+            "Returning shows",
+        ],
+    )
+
+with col2:
     scored_only = st.checkbox(
         "Only seasons with a Metascore",
         value=True,
     )
 
-with col2:
+with col3:
     minimum_reviews = st.number_input(
         "Minimum critic reviews",
         min_value=0,
@@ -111,56 +149,76 @@ with col2:
         step=1,
     )
 
-with col3:
-    sort_option = st.selectbox(
-        "Sort by",
-        [
-            "Critic reviews",
-            "Metascore",
-            "Premiere date",
-            "Title",
-        ],
+with col4:
+    minimum_metascore = st.number_input(
+        "Minimum Metascore",
+        min_value=0,
+        max_value=100,
+        value=0,
+        step=1,
     )
+
+
+# -------------------------
+# Apply filters
+# -------------------------
+
+if season_type == "New shows":
+    year_df = year_df[
+        year_df["Season"] == 1
+    ]
+
+elif season_type == "Returning shows":
+    year_df = year_df[
+        year_df["Season"] > 1
+    ]
+
 
 if scored_only:
     year_df = year_df[
         year_df["Metascore"].notna()
     ]
 
-year_df = year_df[
-    year_df["Reviews"].fillna(0) >= minimum_reviews
-]
 
-if sort_option == "Critic reviews":
-    year_df = year_df.sort_values(
-        ["Reviews", "Metascore"],
-        ascending=[False, False],
-        na_position="last",
-    )
+if minimum_reviews > 0:
+    year_df = year_df[
+        year_df["Reviews"].fillna(0)
+        >= minimum_reviews
+    ]
 
-elif sort_option == "Metascore":
-    year_df = year_df.sort_values(
-        ["Metascore", "Reviews"],
-        ascending=[False, False],
-        na_position="last",
-    )
 
-elif sort_option == "Premiere date":
-    year_df = year_df.sort_values(
-        "Premiere",
-        ascending=False,
-        na_position="last",
-    )
+if minimum_metascore > 0:
+    year_df = year_df[
+        year_df["Metascore"].notna()
+        & (
+            year_df["Metascore"]
+            >= minimum_metascore
+        )
+    ]
 
-elif sort_option == "Title":
-    year_df = year_df.sort_values(
-        ["Title", "Season"],
-        ascending=[True, True],
-    )
-
-st.write(
-    f"**{len(year_df):,} seasons**"
+year_df = year_df.sort_values(
+    ["Reviews", "Metascore"],
+    ascending=[False, False],
+    na_position="last",
 )
+
+
+# -------------------------
+# Summary
+# -------------------------
+
+st.markdown(
+    f"""
+**Showing {len(year_df):,} seasons**  
+{scored_for_year:,} scored seasons out of
+{total_for_year:,} total seasons in {year}
+"""
+)
+
+
+# -------------------------
+# Table
+# -------------------------
 
 display_df = year_df[
     [
@@ -179,11 +237,11 @@ display_df = year_df[
 st.dataframe(
     display_df,
     hide_index=True,
-    use_container_width=True,
+    width="stretch",
     column_config={
-        "Metacritic": st.column_config.LinkColumn(
-            "Link",
-            display_text="Open",
+        "Season": st.column_config.NumberColumn(
+            "Season",
+            format="%d",
         ),
         "Metascore": st.column_config.NumberColumn(
             "Metascore",
@@ -192,6 +250,22 @@ st.dataframe(
         "Reviews": st.column_config.NumberColumn(
             "Reviews",
             format="%d",
+        ),
+        "Positive": st.column_config.NumberColumn(
+            "Positive",
+            format="%d",
+        ),
+        "Mixed": st.column_config.NumberColumn(
+            "Mixed",
+            format="%d",
+        ),
+        "Negative": st.column_config.NumberColumn(
+            "Negative",
+            format="%d",
+        ),
+        "Metacritic": st.column_config.LinkColumn(
+            "Link",
+            display_text="Open",
         ),
     },
 )
