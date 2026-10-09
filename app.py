@@ -1,6 +1,7 @@
 import pandas as pd
 import streamlit as st
 from sqlalchemy import select
+from datetime import datetime
 
 from metacritic.database import (
     SessionLocal,
@@ -82,6 +83,17 @@ def load_seasons() -> pd.DataFrame:
 df = load_seasons()
 
 st.title("Metacritic Explorer")
+
+if st.button("Reload data"):
+    load_seasons.clear()
+    st.session_state["last_reload"] = datetime.now()
+    st.rerun()
+
+if "last_reload" in st.session_state:
+    st.caption(
+        f"Data reloaded at "
+        f"{st.session_state['last_reload'].strftime('%I:%M:%S %p')}"
+    )
 
 # -------------------------
 # Year

@@ -11,6 +11,7 @@ class MetacriticClient:
     def __init__(self):
         self.client = httpx.AsyncClient(
             base_url=BASE_URL,
+            follow_redirects=True,
             headers={
                 "User-Agent": (
                     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
@@ -98,3 +99,32 @@ class MetacriticClient:
         print()
 
         return shows
+    
+    async def get_article(self, slug: str) -> dict:
+        response = await self.client.get(
+            f"/articles/metacritic/{slug}/web",
+            params={
+                "componentName": "article",
+                "componentDisplayName": "Article",
+                "componentType": "Article",
+            },
+        )
+
+        response.raise_for_status()
+        return response.json()
+    
+    async def get_show(self, slug: str) -> dict:
+        response = await self.client.get(
+            f"/shows/metacritic/{slug}/web",
+            params={
+                "componentName": "product",
+                "componentType": "Product",
+            },
+            follow_redirects=False,
+        )
+
+        print("Status:", response.status_code)
+        print("Location:", response.headers.get("location"))
+
+        response.raise_for_status()
+        return response.json()
