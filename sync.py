@@ -12,6 +12,7 @@ from metacritic.database import (
     SeasonRecord,
     ShowRecord,
     init_db,
+    MovieRecord
 )
 
 
@@ -377,6 +378,108 @@ async def refresh(
         await mc.close()
 
 
+async def sync_movies(year: int):
+    init_db()
+    mc = MetacriticClient()
+
+    try:
+        print(
+            f"Crawling {year} movies "
+            f"newest → oldest..."
+        )
+
+        newest_first = await mc.get_all_movies(
+            year=year,
+            sort_by="-releaseDate",
+        )
+
+        print(
+            f"\nCrawling {year} movies "
+            f"oldest → newest..."
+        )
+
+        oldest_first = await mc.get_all_movies(
+            year=year,
+            sort_by="releaseDate",
+        )
+
+        newest_by_id = {
+            movie.id: movie
+            for movie in newest_first
+        }
+
+        oldest_by_id = {
+            movie.id: movie
+            for movie in oldest_first
+        }
+
+        combined = {
+            **newest_by_id,
+            **oldest_by_id,
+        }
+
+        print()
+        print(
+            f"Newest-first unique: "
+            f"{len(newest_by_id)}"
+        )
+
+        print(
+            f"Oldest-first unique: "
+            f"{len(oldest_by_id)}"
+        )
+
+        print(
+            f"Combined unique:     "
+            f"{len(combined)}"
+        )
+
+        with SessionLocal() as session:
+            for movie in combined.values():
+                score = movie.critic_score_summary
+
+                record = MovieRecord(
+                    id=movie.id,
+                    title=movie.title,
+                    slug=movie.slug,
+                    release_year=movie.premiere_year,
+                    release_date=movie.release_date,
+                    metascore=(
+                        score.score
+                        if score else None
+                    ),
+                    review_count=(
+                        score.review_count
+                        if score else None
+                    ),
+                    positive_count=(
+                        score.positive_count
+                        if score else None
+                    ),
+                    neutral_count=(
+                        score.neutral_count
+                        if score else None
+                    ),
+                    negative_count=(
+                        score.negative_count
+                        if score else None
+                    ),
+                    last_fetched=datetime.now(),
+                )
+
+                session.merge(record)
+
+            session.commit()
+
+        print(
+            f"\nSaved {len(combined)} "
+            f"{year} movies."
+        )
+
+    finally:
+        await mc.close()
+
+
 def parse_args():
     parser = argparse.ArgumentParser()
 
@@ -413,13 +516,25 @@ def parse_args():
         help="Year to refresh (default: current year)",
     )
 
+    parser.add_argument(
+        "--movies-year",
+        type=int,
+        default=None,
+        help="Sync movies released in this year",
+    )
+
     return parser.parse_args()
 
 
 if __name__ == "__main__":
     args = parse_args()
 
-    if args.refresh:
+    if args.movies_year is not None:
+        asyncio.run(
+            sync_movies(args.movies_year)
+        )
+
+    elif args.refresh:
         asyncio.run(
             refresh(
                 year=args.year,

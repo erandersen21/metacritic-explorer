@@ -45,3 +45,32 @@ class SeasonListData(BaseModel):
 
 class SeasonListResponse(BaseModel):
     data: SeasonListData
+
+class Movie(BaseModel):
+    id: int
+    title: str
+    slug: str
+
+    premiere_year: int | None = Field(
+        default=None,
+        alias="premiereYear",
+    )
+
+    release_date: str | None = Field(
+        default=None,
+        alias="releaseDate",
+    )
+
+    critic_score_summary: CriticScoreSummary | None = Field(
+        default=None,
+        alias="criticScoreSummary",
+    )
+
+
+class MovieFinderData(BaseModel):
+    items: list[Movie]
+    total_results: int = Field(alias="totalResults")
+
+
+class MovieFinderResponse(BaseModel):
+    data: MovieFinderData

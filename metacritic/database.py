@@ -105,5 +105,62 @@ class SeasonRecord(Base):
         nullable=True,
     )
 
+class MovieRecord(Base):
+    __tablename__ = "movies"
+
+    id: Mapped[int] = mapped_column(
+        Integer,
+        primary_key=True,
+    )
+
+    title: Mapped[str] = mapped_column(String)
+
+    slug: Mapped[str] = mapped_column(
+        String,
+        index=True,
+    )
+
+    release_year: Mapped[int | None] = mapped_column(
+        Integer,
+        nullable=True,
+        index=True,
+    )
+
+    release_date: Mapped[str | None] = mapped_column(
+        String,
+        nullable=True,
+        index=True,
+    )
+
+    metascore: Mapped[int | None] = mapped_column(
+        Integer,
+        nullable=True,
+    )
+
+    review_count: Mapped[int | None] = mapped_column(
+        Integer,
+        nullable=True,
+    )
+
+    positive_count: Mapped[int | None] = mapped_column(
+        Integer,
+        nullable=True,
+    )
+
+    neutral_count: Mapped[int | None] = mapped_column(
+        Integer,
+        nullable=True,
+    )
+
+    negative_count: Mapped[int | None] = mapped_column(
+        Integer,
+        nullable=True,
+    )
+
+    last_fetched: Mapped[datetime | None] = mapped_column(
+        DateTime,
+        nullable=True,
+    )
+
 def init_db():
     Base.metadata.create_all(engine)

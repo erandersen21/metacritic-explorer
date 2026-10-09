@@ -1,7 +1,13 @@
 import httpx
 import asyncio
 
-from metacritic.models import FinderResponse, SeasonListResponse, Show
+from metacritic.models import (
+    FinderResponse,
+    Movie,
+    MovieFinderResponse,
+    SeasonListResponse,
+    Show
+)
 
 
 BASE_URL = "https://backend.metacritic.com"
@@ -128,3 +134,75 @@ class MetacriticClient:
 
         response.raise_for_status()
         return response.json()
+    
+    async def get_movies(
+        self,
+        year: int,
+        offset: int = 0,
+        limit: int = 50,
+        sort_by: str = "-releaseDate",
+    ) -> MovieFinderResponse:
+        response = await self.client.get(
+            "/finder/metacritic/web",
+            params={
+                "sortBy": sort_by,
+                "mcoTypeId": 2,
+                "offset": offset,
+                "limit": limit,
+                "releaseYearMin": year,
+                "releaseYearMax": year,
+                "componentName": "finder",
+                "componentType": "Finder",
+            },
+        )
+
+        response.raise_for_status()
+
+        return MovieFinderResponse.model_validate(
+            response.json()
+        )
+    
+    async def get_all_movies(
+        self,
+        year: int,
+        sort_by: str = "-releaseDate",
+        limit: int = 50,
+    ) -> list[Movie]:
+        first_page = await self.get_movies(
+            year=year,
+            offset=0,
+            limit=limit,
+            sort_by=sort_by,
+        )
+
+        total = first_page.data.total_results
+        movies = list(first_page.data.items)
+
+        print(
+            f"Metacritic reports {total} "
+            f"movie results for {year}."
+        )
+
+        offset = limit
+
+        while offset < total:
+            page = await self.get_movies(
+                year=year,
+                offset=offset,
+                limit=limit,
+                sort_by=sort_by,
+            )
+
+            movies.extend(page.data.items)
+
+            print(
+                f"Fetched {min(len(movies), total)}/{total}",
+                end="\r",
+            )
+
+            offset += limit
+            await asyncio.sleep(0.1)
+
+        print()
+
+        return movies
