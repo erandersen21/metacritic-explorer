@@ -1,7 +1,14 @@
+import asyncio
 from datetime import datetime
 
 import pandas as pd
 import streamlit as st
+
+from stats import (
+    calculate_distribution_stats,
+    review_quintile_label,
+    score_quintile_label,
+)
 
 from metacritic.database import (
     MovieRecord,
@@ -9,6 +16,8 @@ from metacritic.database import (
     SessionLocal,
     ShowRecord,
 )
+
+from sync import refresh_all
 
 
 st.set_page_config(
@@ -125,10 +134,43 @@ def load_movies() -> pd.DataFrame:
 
 
 # ---------------------------------------------------------
-# Reload button
+# Data controls
 # ---------------------------------------------------------
 
-if st.button("Reload data"):
+current_year = datetime.now().year
+
+control_col1, control_col2, control_col3 = st.columns(
+    [1, 1, 3]
+)
+
+with control_col1:
+    refresh_year = st.number_input(
+        "Refresh year",
+        min_value=1900,
+        max_value=current_year + 5,
+        value=current_year,
+        step=1,
+    )
+
+with control_col2:
+    st.write("")
+    st.write("")
+
+    reload_clicked = st.button(
+        "Reload local data"
+    )
+
+with control_col3:
+    st.write("")
+    st.write("")
+
+    refresh_clicked = st.button(
+        "Refresh from Metacritic",
+        type="primary",
+    )
+
+
+if reload_clicked:
     load_seasons.clear()
     load_movies.clear()
 
@@ -137,9 +179,61 @@ if st.button("Reload data"):
     st.rerun()
 
 
-if "last_reload" in st.session_state:
+if refresh_clicked:
+    with st.spinner(
+        f"Refreshing {refresh_year} TV and movie data..."
+    ):
+        try:
+            asyncio.run(
+                refresh_all(
+                    year=int(refresh_year)
+                )
+            )
+
+            load_seasons.clear()
+            load_movies.clear()
+
+            st.session_state["last_refresh"] = (
+                datetime.now()
+            )
+
+            st.session_state["refresh_success"] = True
+
+        except Exception as error:
+            st.session_state["refresh_error"] = str(
+                error
+            )
+
+    st.rerun()
+
+
+if st.session_state.pop(
+    "refresh_success",
+    False,
+):
+    st.success(
+        "Metacritic refresh completed successfully."
+    )
+
+
+if "refresh_error" in st.session_state:
+    st.error(
+        "Refresh failed: "
+        + st.session_state.pop(
+            "refresh_error"
+        )
+    )
+
+
+if "last_refresh" in st.session_state:
     st.caption(
-        "Data reloaded from SQLite at "
+        "Last Metacritic refresh: "
+        f"{st.session_state['last_refresh'].strftime('%I:%M:%S %p')}"
+    )
+
+elif "last_reload" in st.session_state:
+    st.caption(
+        "Local data reloaded at "
         f"{st.session_state['last_reload'].strftime('%I:%M:%S %p')}"
     )
 
@@ -406,9 +500,39 @@ with movies_tab:
             )
 
         movie_df = movies[
-            movies["Year"]
-            == selected_movie_year
+            movies["Year"] == selected_movie_year
         ].copy()
+
+        score_stats = calculate_distribution_stats(
+            movie_df,
+            "Metascore",
+        )
+
+        review_stats = calculate_distribution_stats(
+            movie_df,
+            "Reviews",
+            minimum=1,
+        )
+
+        if score_stats:
+            movie_df["Score Quintile"] = (
+                movie_df["Metascore"].apply(
+                    lambda score: score_quintile_label(
+                        score,
+                        score_stats,
+                    )
+                )
+            )
+
+        if review_stats:
+            movie_df["Review Quintile"] = (
+                movie_df["Reviews"].apply(
+                    lambda reviews: review_quintile_label(
+                        reviews,
+                        review_stats,
+                    )
+                )
+            )
 
         total_movies = len(movie_df)
 
@@ -466,13 +590,88 @@ with movies_tab:
             f"in {selected_movie_year}."
         )
 
+        if score_stats:
+            with st.expander(
+                f"{selected_movie_year} distribution statistics",
+                expanded=False,
+            ):
+                score_col, review_col = st.columns(2)
+
+                with score_col:
+                    st.subheader("Metascores")
+
+                    st.write(
+                        f"**Average:** "
+                        f"{score_stats['mean']:.1f}"
+                    )
+
+                    st.write(
+                        f"**Median:** "
+                        f"{score_stats['median']:.1f}"
+                    )
+
+                    st.write(
+                        f"**20th percentile:** "
+                        f"{score_stats['q20']:.1f}"
+                    )
+
+                    st.write(
+                        f"**40th percentile:** "
+                        f"{score_stats['q40']:.1f}"
+                    )
+
+                    st.write(
+                        f"**60th percentile:** "
+                        f"{score_stats['q60']:.1f}"
+                    )
+
+                    st.write(
+                        f"**80th percentile:** "
+                        f"{score_stats['q80']:.1f}"
+                    )
+
+                with review_col:
+                    st.subheader("Number of critic reviews")
+
+                    st.write(
+                        f"**Average:** "
+                        f"{review_stats['mean']:.1f}"
+                    )
+
+                    st.write(
+                        f"**Median:** "
+                        f"{review_stats['median']:.1f}"
+                    )
+
+                    st.write(
+                        f"**20th percentile:** "
+                        f"{review_stats['q20']:.1f}"
+                    )
+
+                    st.write(
+                        f"**40th percentile:** "
+                        f"{review_stats['q40']:.1f}"
+                    )
+
+                    st.write(
+                        f"**60th percentile:** "
+                        f"{review_stats['q60']:.1f}"
+                    )
+
+                    st.write(
+                        f"**80th percentile:** "
+                        f"{review_stats['q80']:.1f}"
+                    )
+
         st.dataframe(
             movie_df[
                 [
                     "Title",
                     "Release",
                     "Metascore",
+                    "Score Quintile",
                     "Reviews",
+                    "Review Quintile",
                     "Positive",
                     "Mixed",
                     "Negative",

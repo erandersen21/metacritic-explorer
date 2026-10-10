@@ -479,6 +479,32 @@ async def sync_movies(year: int):
     finally:
         await mc.close()
 
+async def refresh_all(
+    year: int,
+    limit: int | None = None,
+):
+    print("=" * 60)
+    print(f"REFRESHING TV DATA FOR {year}")
+    print("=" * 60)
+    print()
+
+    await refresh(
+        year=year,
+        limit=limit,
+    )
+
+    print()
+    print("=" * 60)
+    print(f"REFRESHING MOVIE DATA FOR {year}")
+    print("=" * 60)
+    print()
+
+    await sync_movies(year)
+
+    print()
+    print("=" * 60)
+    print("FULL REFRESH COMPLETE")
+    print("=" * 60)
 
 def parse_args():
     parser = argparse.ArgumentParser()
@@ -504,8 +530,8 @@ def parse_args():
         "--refresh",
         action="store_true",
         help=(
-            "Discover current/upcoming shows and "
-            "refresh current-year data"
+            "Refresh TV seasons and movies "
+            "for the selected year"
         ),
     )
 
@@ -536,7 +562,7 @@ if __name__ == "__main__":
 
     elif args.refresh:
         asyncio.run(
-            refresh(
+            refresh_all(
                 year=args.year,
                 limit=args.limit,
             )
