@@ -1,6 +1,6 @@
 import argparse
 import asyncio
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import httpx
 
@@ -15,14 +15,23 @@ from metacritic.database import (
     MovieRecord
 )
 
+TV_REFRESH_CONCURRENCY = 5
+TV_REFRESH_RETRIES = 2
+TV_REFRESH_FRESHNESS_HOURS = 6
 
-async def save_show_seasons(
+RETRYABLE_STATUS_CODES = {
+    429,
+    500,
+    502,
+    503,
+    504,
+}
+
+def save_show_seasons(
     session,
-    mc: MetacriticClient,
     show: ShowRecord,
+    result,
 ) -> int:
-    result = await mc.get_seasons(show.slug)
-
     for season in result.data.items:
         score = season.critic_score_summary
 
@@ -33,16 +42,25 @@ async def save_show_seasons(
             season_number=season.season_number,
             season_slug=season.season_slug,
             premiere_date=season.premiere_date,
-            metascore=score.score if score else None,
-            review_count=score.review_count if score else None,
+            metascore=(
+                score.score
+                if score else None
+            ),
+            review_count=(
+                score.review_count
+                if score else None
+            ),
             positive_count=(
-                score.positive_count if score else None
+                score.positive_count
+                if score else None
             ),
             neutral_count=(
-                score.neutral_count if score else None
+                score.neutral_count
+                if score else None
             ),
             negative_count=(
-                score.negative_count if score else None
+                score.negative_count
+                if score else None
             ),
         )
 
@@ -54,6 +72,191 @@ async def save_show_seasons(
     session.commit()
 
     return len(result.data.items)
+
+
+async def fetch_show_seasons(
+    mc: MetacriticClient,
+    semaphore: asyncio.Semaphore,
+    show_id: int,
+    title: str,
+    slug: str,
+):
+    async with semaphore:
+        for attempt in range(
+            TV_REFRESH_RETRIES + 1
+        ):
+            try:
+                result = await mc.get_seasons(
+                    slug
+                )
+
+                return {
+                    "show_id": show_id,
+                    "title": title,
+                    "slug": slug,
+                    "result": result,
+                    "status": 200,
+                    "error": None,
+                }
+
+            except httpx.HTTPStatusError as error:
+                status = (
+                    error.response.status_code
+                )
+
+                if (
+                    status
+                    in RETRYABLE_STATUS_CODES
+                    and attempt
+                    < TV_REFRESH_RETRIES
+                ):
+                    await asyncio.sleep(
+                        1 * (2 ** attempt)
+                    )
+
+                    continue
+
+                return {
+                    "show_id": show_id,
+                    "title": title,
+                    "slug": slug,
+                    "result": None,
+                    "status": status,
+                    "error": error,
+                }
+
+            except Exception as error:
+                if attempt < TV_REFRESH_RETRIES:
+                    await asyncio.sleep(
+                        1 * (2 ** attempt)
+                    )
+
+                    continue
+
+                return {
+                    "show_id": show_id,
+                    "title": title,
+                    "slug": slug,
+                    "result": None,
+                    "status": None,
+                    "error": error,
+                }
+
+
+async def refresh_show_batch(
+    session,
+    mc: MetacriticClient,
+    shows: list[ShowRecord],
+) -> tuple[int, int]:
+    semaphore = asyncio.Semaphore(
+        TV_REFRESH_CONCURRENCY
+    )
+
+    tasks = [
+        asyncio.create_task(
+            fetch_show_seasons(
+                mc=mc,
+                semaphore=semaphore,
+                show_id=show.id,
+                title=show.title,
+                slug=show.slug,
+            )
+        )
+        for show in shows
+    ]
+
+    success_count = 0
+    failure_count = 0
+
+    total = len(tasks)
+
+    for index, task in enumerate(
+        asyncio.as_completed(tasks),
+        start=1,
+    ):
+        fetched = await task
+
+        print(
+            f"[{index}/{total}] "
+            f"{fetched['title']}"
+        )
+
+        show = session.get(
+            ShowRecord,
+            fetched["show_id"],
+        )
+
+        if show is None:
+            failure_count += 1
+
+            print(
+                "  ✗ Show disappeared "
+                "from local database"
+            )
+
+            continue
+
+        if fetched["status"] == 200:
+            try:
+                count = save_show_seasons(
+                    session,
+                    show,
+                    fetched["result"],
+                )
+
+                success_count += 1
+
+                print(
+                    f"  ✓ Saved/updated "
+                    f"{count} seasons"
+                )
+
+            except Exception as error:
+                session.rollback()
+                failure_count += 1
+
+                print(
+                    f"  ✗ Database error: "
+                    f"{type(error).__name__}: "
+                    f"{error}"
+                )
+
+        elif fetched["status"] == 404:
+            show.seasons_fetched = True
+            show.seasons_last_fetched = (
+                datetime.now()
+            )
+
+            session.commit()
+
+            success_count += 1
+
+            print(
+                "  - No season list (404)"
+            )
+
+        else:
+            failure_count += 1
+
+            if fetched["status"] is not None:
+                print(
+                    f"  ✗ HTTP "
+                    f"{fetched['status']}"
+                )
+
+            else:
+                error = fetched["error"]
+
+                print(
+                    f"  ✗ "
+                    f"{type(error).__name__}: "
+                    f"{error}"
+                )
+
+    return (
+        success_count,
+        failure_count,
+    )
 
 
 async def sync_seasons(
@@ -119,10 +322,14 @@ async def sync_seasons(
                 )
 
                 try:
-                    count = await save_show_seasons(
+                    result = await mc.get_seasons(
+                        show.slug
+                    )
+
+                    count = save_show_seasons(
                         session,
-                        mc,
                         show,
+                        result,
                     )
 
                     print(
@@ -204,6 +411,7 @@ async def ensure_show_exists(
 async def refresh(
     year: int,
     limit: int | None = None,
+    force: bool = False,
 ):
     init_db()
     mc = MetacriticClient()
@@ -252,7 +460,6 @@ async def refresh(
                 if show is not None:
                     calendar_shows[show.id] = show
 
-                await asyncio.sleep(0.05)
 
             after_count = session.query(
                 ShowRecord
@@ -296,8 +503,37 @@ async def refresh(
                 calendar_shows
             )
 
+            all_shows = list(
+                shows_to_refresh.values()
+            )
+
+            if force:
+                shows = all_shows
+                skipped_count = 0
+            else:
+                fresh_cutoff = (
+                    datetime.now()
+                    - timedelta(
+                        hours=TV_REFRESH_FRESHNESS_HOURS
+                    )
+                )
+
+                shows = [
+                    show
+                    for show in all_shows
+                    if (
+                        show.seasons_last_fetched is None
+                        or show.seasons_last_fetched
+                        < fresh_cutoff
+                    )
+                ]
+
+                skipped_count = (
+                    len(all_shows) - len(shows)
+                )
+
             shows = sorted(
-                shows_to_refresh.values(),
+                shows,
                 key=lambda show: show.id,
             )
 
@@ -310,7 +546,24 @@ async def refresh(
             )
 
             print(
-                f"Total unique shows to refresh: "
+                f"Total unique candidate shows: "
+                f"{len(all_shows)}"
+            )
+
+            if force:
+                print(
+                    "Force refresh enabled; "
+                    "freshness window ignored."
+                )
+            else:
+                print(
+                    f"Skipping {skipped_count} shows "
+                    f"refreshed in the last "
+                    f"{TV_REFRESH_FRESHNESS_HOURS} hours."
+                )
+
+            print(
+                f"Shows to refresh: "
                 f"{len(shows)}\n"
             )
 
@@ -318,52 +571,20 @@ async def refresh(
             # Refresh seasons
             # -------------------------
 
-            success_count = 0
-            failure_count = 0
+            print(
+                f"Fetching up to "
+                f"{TV_REFRESH_CONCURRENCY} "
+                f"shows concurrently...\n"
+            )
 
-            for index, show in enumerate(
-                shows,
-                start=1,
-            ):
-                print(
-                    f"[{index}/{len(shows)}] "
-                    f"{show.title}"
-                )
-
-                try:
-                    count = await save_show_seasons(
-                        session,
-                        mc,
-                        show,
-                    )
-
-                    success_count += 1
-
-                    print(
-                        f"  ✓ Saved/updated "
-                        f"{count} seasons"
-                    )
-
-                except httpx.HTTPStatusError as error:
-                    session.rollback()
-                    failure_count += 1
-
-                    print(
-                        f"  ✗ HTTP "
-                        f"{error.response.status_code}"
-                    )
-
-                except Exception as error:
-                    session.rollback()
-                    failure_count += 1
-
-                    print(
-                        f"  ✗ "
-                        f"{type(error).__name__}: "
-                        f"{error}"
-                    )
-
-                await asyncio.sleep(0.2)
+            (
+                success_count,
+                failure_count,
+            ) = await refresh_show_batch(
+                session=session,
+                mc=mc,
+                shows=shows,
+            )
 
             print()
             print("Refresh complete.")
@@ -482,6 +703,7 @@ async def sync_movies(year: int):
 async def refresh_all(
     year: int,
     limit: int | None = None,
+    force: bool = False,
 ):
     print("=" * 60)
     print(f"REFRESHING TV DATA FOR {year}")
@@ -491,6 +713,7 @@ async def refresh_all(
     await refresh(
         year=year,
         limit=limit,
+        force=force,
     )
 
     print()
@@ -557,6 +780,15 @@ def parse_args():
     )
 
     parser.add_argument(
+        "--force",
+        action="store_true",
+        help=(
+            "Ignore the TV freshness window and "
+            "refresh all candidate shows"
+        ),
+    )
+
+    parser.add_argument(
         "--year",
         type=int,
         default=datetime.now().year,
@@ -604,6 +836,7 @@ if __name__ == "__main__":
             refresh_all(
                 year=args.year,
                 limit=args.limit,
+                force=args.force,
             )
         )
 
