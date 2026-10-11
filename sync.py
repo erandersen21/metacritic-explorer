@@ -506,6 +506,27 @@ async def refresh_all(
     print("FULL REFRESH COMPLETE")
     print("=" * 60)
 
+async def sync_movie_range(
+    start_year: int,
+    end_year: int,
+):
+    if start_year > end_year:
+        raise ValueError(
+            "Start year must be before end year."
+        )
+
+    for year in range(
+        start_year,
+        end_year + 1,
+    ):
+        print()
+        print("=" * 60)
+        print(f"SYNCING MOVIES FOR {year}")
+        print("=" * 60)
+        print()
+
+        await sync_movies(year)
+
 def parse_args():
     parser = argparse.ArgumentParser()
 
@@ -549,13 +570,31 @@ def parse_args():
         help="Sync movies released in this year",
     )
 
+    parser.add_argument(
+        "--movies-range",
+        nargs=2,
+        type=int,
+        metavar=("START_YEAR", "END_YEAR"),
+        help="Sync movies for an inclusive range of years",
+    )
+
     return parser.parse_args()
 
 
 if __name__ == "__main__":
     args = parse_args()
 
-    if args.movies_year is not None:
+    if args.movies_range is not None:
+        start_year, end_year = args.movies_range
+
+        asyncio.run(
+            sync_movie_range(
+                start_year,
+                end_year,
+            )
+        )
+
+    elif args.movies_year is not None:
         asyncio.run(
             sync_movies(args.movies_year)
         )

@@ -139,23 +139,69 @@ def review_quintile_label(
     reviews: float | int | None,
     stats: dict,
 ) -> str | None:
-    if pd.isna(reviews) or reviews <= 0:
+    if pd.isna(reviews) or not stats:
         return None
 
-    quintile = quintile_number(
-        reviews,
-        stats,
+    if reviews <= stats["q20"]:
+        return "Least reviewed 20%"
+
+    if reviews <= stats["q40"]:
+        return "20th–40th percentile"
+
+    if reviews <= stats["q60"]:
+        return "40th–60th percentile"
+
+    if reviews <= stats["q80"]:
+        return "60th–80th percentile"
+
+    return "Most reviewed 20%"
+
+def get_benchmark_years(
+    selected_year: int,
+    years: int = 5,
+) -> list[int]:
+    return list(
+        range(
+            selected_year - years,
+            selected_year,
+        )
     )
 
-    labels = {
-        1: "Least reviewed 20%",
-        2: "20th–40th percentile",
-        3: "40th–60th percentile",
-        4: "60th–80th percentile",
-        5: "Most reviewed 20%",
-    }
 
-    return labels.get(quintile)
+def get_benchmark_population(
+    df: pd.DataFrame,
+    selected_year: int,
+    years: int = 5,
+) -> tuple[pd.DataFrame, list[int], list[int]]:
+    benchmark_years = get_benchmark_years(
+        selected_year,
+        years,
+    )
+
+    available_years = set(
+        df["Year"]
+        .dropna()
+        .astype(int)
+        .unique()
+    )
+
+    missing_years = [
+        year
+        for year in benchmark_years
+        if year not in available_years
+    ]
+
+    benchmark_df = df[
+        df["Year"].isin(
+            benchmark_years
+        )
+    ].copy()
+
+    return (
+        benchmark_df,
+        benchmark_years,
+        missing_years,
+    )
 
 
 if __name__ == "__main__":
